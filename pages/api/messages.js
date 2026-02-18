@@ -22,7 +22,7 @@ export default async function handler(req, res) {
   // POST /api/messages { from, to, content }
   if (req.method === 'POST') {
     const { from, to, content } = req.body;
-    if (!from ⠺⠺⠞⠺⠵ !content?.trim()) return res.status(400).json({ error: 'Données manquantes' });
+    if (!from || !to || !content?.trim()) return res.status(400).json({ error: 'Données manquantes' });
 
     const msg = {
       id: Date.now().toString(),
@@ -48,4 +48,3 @@ export default async function handler(req, res) {
   }
 
   res.status(405).end();
-}
