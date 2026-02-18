@@ -541,6 +541,7 @@ export default function Home() {
   const [totalUnread, setTotalUnread] = useState(0);
   const [dmTarget, setDmTarget] = useState(null);
   const [showAdmin, setShowAdmin] = useState(false);
+  const [sortBy, setSortBy] = useState('recent');
 
   const intervalRef = useRef(null);
 
@@ -567,10 +568,10 @@ export default function Home() {
   const fetchPosts = useCallback(async () => {
     if (!activeChannel) return;
     try {
-      const r = await fetch(`/api/posts?channel=${encodeURIComponent(activeChannel)}`);
+      const r = await fetch(`/api/posts?channel=${encodeURIComponent(activeChannel)}&sort=${sortBy}`);
       setPosts(await r.json());
     } catch (e) {}
-  }, [activeChannel]);
+  }, [activeChannel, sortBy]);
 
   const checkBan = async (name) => {
     try {
@@ -727,6 +728,10 @@ export default function Home() {
                 <div className="channel-header-bar">
                   <span># {currentChannel?.name}</span>
                   {currentChannel?.description && <span className="channel-header-desc">{currentChannel.description}</span>}
+                </div>
+                <div className="sort-bar">
+                  <button className={`sort-btn ${sortBy === 'recent' ? 'active' : ''}`} onClick={() => setSortBy('recent')}>🕐 Récents</button>
+                  <button className={`sort-btn ${sortBy === 'likes' ? 'active' : ''}`} onClick={() => setSortBy('likes')}>🔥 Populaires</button>
                 </div>
                 <div className="compose-box">
                   <span className="compose-avatar">{avatar}</span>
@@ -971,6 +976,11 @@ const styles = `
   .admin-list { display: flex; flex-direction: column; gap: 6px; }
   .admin-list-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--surface); border-radius: 8px; padding: 8px 12px; font-size: 0.83rem; }
   .admin-desc { color: var(--muted); font-size: 0.76rem; flex: 1; }
+
+  .sort-bar { display: flex; gap: 8px; margin-bottom: 12px; }
+  .sort-btn { background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 5px 14px; color: var(--muted); font-size: 0.8rem; cursor: pointer; transition: all 0.15s; font-family: 'IBM Plex Mono', monospace; }
+  .sort-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .sort-btn.active { border-color: var(--accent); color: var(--accent); background: #0d2018; }
 
   /* ── MOBILE ── */
   @media (max-width: 768px) {

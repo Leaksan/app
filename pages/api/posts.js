@@ -8,8 +8,14 @@ const kv = new Redis({
 
 export default async function handler(req, res) {
   if (req.method === 'GET') {
-    const { channel = 'general' } = req.query;
-    const posts = await kv.lrange('posts:' + channel, 0, 99) || [];
+    const { channel = 'general', sort = 'recent' } = req.query;
+    let posts = await kv.lrange('posts:' + channel, 0, 99) || [];
+
+    if (sort === 'likes') {
+      posts = [...posts].sort((a, b) => b.likes.length - a.likes.length);
+    }
+    // default: déjà triés par date (lpush = plus récent en premier)
+
     return res.status(200).json(posts);
   }
 
