@@ -940,13 +940,16 @@ const styles = `
     .layout { flex-direction: column; }
     main { padding: 12px; }
 
-    .messages-panel { max-width: 100%; }
-    .messages-sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--border); }
+    /* Messages - plein écran sur mobile */
+    .messages-overlay { background: none; }
+    .messages-panel { max-width: 100%; border-left: none; flex-direction: column; }
+    .messages-sidebar { width: 100%; height: 100vh; border-right: none; flex-shrink: 0; }
     .messages-sidebar.hidden-mobile { display: none; }
+    .messages-main { width: 100%; height: 100vh; }
     .messages-main.hidden-mobile { display: none; }
-    .messages-main { width: 100%; }
     .btn-close-mobile { display: block; }
     .media-hint { display: none; }
+    .message-bubble { max-width: 85%; }
   }
 
   @media (max-width: 480px) {
