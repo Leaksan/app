@@ -1,4 +1,8 @@
-import { kv } from '@vercel/kv';
+import { Redis } from '@upstash/redis';
+const kv = new Redis({
+  url: process.env.STORAGE_URL,
+  token: process.env.STORAGE_TOKEN,
+});
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
