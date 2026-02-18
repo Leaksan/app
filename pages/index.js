@@ -95,7 +95,12 @@ function MessageBubble({ msg, isMine }) {
         </div>
       )}
       {msg.content && !['[📷 Photo]','[🎤 Vocal]'].includes(msg.content) && <p>{msg.content}</p>}
-      <span className="msg-time">{timeAgo(msg.timestamp)}</span>
+      <div className="msg-meta">
+        <span className="msg-time">{timeAgo(msg.timestamp)}</span>
+        {isMine && (
+          <span className="msg-status">{msg.read ? '✓✓' : '✓'}</span>
+        )}
+      </div>
     </div>
   );
 }
@@ -107,6 +112,7 @@ function MessagesPanel({ username, initialContact, onClose, onUnreadChange }) {
   const [messages, setMessages] = useState([]);
   const [newMsg, setNewMsg] = useState('');
   const [searchUser, setSearchUser] = useState('');
+  const [userSuggestions, setUserSuggestions] = useState([]);
   const messagesEndRef = useRef(null);
   const intervalRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -123,10 +129,17 @@ function MessagesPanel({ username, initialContact, onClose, onUnreadChange }) {
   const fetchMsgs = useCallback(async (contact) => {
     try {
       const r = await fetch(`/api/messages?user1=${encodeURIComponent(username)}&user2=${encodeURIComponent(contact)}`);
-      setMessages(await r.json());
+      const data = await r.json();
+      setMessages(data);
+      // Marquer comme lu
       await fetch('/api/conversations', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user: username, from: contact })
+      });
+      // Marquer les messages comme lus côté expéditeur
+      await fetch('/api/messages', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reader: username, sender: contact })
       });
       fetchConvs();
       setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
@@ -144,6 +157,15 @@ function MessagesPanel({ username, initialContact, onClose, onUnreadChange }) {
   }, []);
 
   useEffect(() => { if (activeConv) fetchMsgs(activeConv); }, [activeConv]);
+
+  const searchUsers = async (q) => {
+    if (!q.trim()) { setUserSuggestions([]); return; }
+    try {
+      const r = await fetch(`/api/users?q=${encodeURIComponent(q)}`);
+      const data = await r.json();
+      setUserSuggestions(data.filter(u => u !== username));
+    } catch (e) {}
+  };
 
   const sendMsg = async (content, mediaId = null) => {
     if (!activeConv) return;
@@ -186,24 +208,37 @@ function MessagesPanel({ username, initialContact, onClose, onUnreadChange }) {
     await sendMsg('[🎤 Vocal]', mediaId);
   };
 
-  const startNewConv = () => {
-    if (!searchUser.trim() || searchUser.trim() === username) return;
-    setActiveConv(searchUser.trim());
+  const startConvWith = (user) => {
+    setActiveConv(user);
     setSearchUser('');
+    setUserSuggestions([]);
   };
 
   return (
     <div className="messages-panel">
-      <div className="messages-sidebar">
+      {/* SIDEBAR — masquée sur mobile quand une conv est ouverte */}
+      <div className={`messages-sidebar ${activeConv ? 'hidden-mobile' : ''}`}>
         <div className="messages-header">
           <h2>✉️ Messages</h2>
           <button className="btn-close" onClick={onClose}>✕</button>
         </div>
         <div className="new-conv">
-          <input placeholder="Pseudo..." value={searchUser}
-            onChange={e => setSearchUser(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && startNewConv()} />
-          <button onClick={startNewConv}>→</button>
+          <div className="search-wrapper">
+            <input placeholder="Chercher un pseudo..."
+              value={searchUser}
+              onChange={e => { setSearchUser(e.target.value); searchUsers(e.target.value); }}
+              onKeyDown={e => e.key === 'Enter' && searchUser.trim() && startConvWith(searchUser.trim())}
+            />
+            {userSuggestions.length > 0 && (
+              <div className="suggestions-dropdown">
+                {userSuggestions.map(u => (
+                  <div key={u} className="suggestion-item" onClick={() => startConvWith(u)}>
+                    👤 {u}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
         <div className="conv-list">
           {conversations.length === 0 && <p className="empty-convs">Tape un pseudo pour démarrer</p>}
@@ -216,7 +251,9 @@ function MessagesPanel({ username, initialContact, onClose, onUnreadChange }) {
           ))}
         </div>
       </div>
-      <div className="messages-main">
+
+      {/* MAIN CHAT */}
+      <div className={`messages-main ${!activeConv ? 'hidden-mobile' : ''}`}>
         {!activeConv ? (
           <div className="no-conv">Sélectionne une conversation ou tape un pseudo</div>
         ) : (
@@ -225,6 +262,7 @@ function MessagesPanel({ username, initialContact, onClose, onUnreadChange }) {
               <button className="btn-back" onClick={() => setActiveConv(null)}>←</button>
               <span>💬 {activeConv}</span>
               <span className="media-hint">Médias : 10min</span>
+              <button className="btn-close-mobile" onClick={onClose}>✕</button>
             </div>
             <div className="messages-list">
               {messages.map(m => <MessageBubble key={m.id} msg={m} isMine={m.from === username} />)}
@@ -250,6 +288,7 @@ function MessagesPanel({ username, initialContact, onClose, onUnreadChange }) {
 function AdminPanel({ onClose, channels }) {
   const [banned, setBanned] = useState([]);
   const [banInput, setBanInput] = useState('');
+  const [banSuggestions, setBanSuggestions] = useState([]);
   const [newChannel, setNewChannel] = useState('');
   const [newChannelDesc, setNewChannelDesc] = useState('');
   const [channelList, setChannelList] = useState(channels);
@@ -268,14 +307,23 @@ function AdminPanel({ onClose, channels }) {
 
   useEffect(() => { fetchBanned(); fetchChannels(); }, []);
 
-  const banUser = async () => {
-    if (!banInput.trim()) return;
+  const searchUsers = async (q) => {
+    if (!q.trim()) { setBanSuggestions([]); return; }
+    try {
+      const r = await fetch(`/api/users?q=${encodeURIComponent(q)}`);
+      setBanSuggestions(await r.json());
+    } catch (e) {}
+  };
+
+  const banUser = async (u) => {
+    const target = u || banInput.trim();
+    if (!target) return;
     await fetch('/api/admin', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: banInput.trim() })
+      body: JSON.stringify({ username: target })
     });
-    setMsg(`✅ ${banInput} banni`);
-    setBanInput('');
+    setMsg(`✅ ${target} banni`);
+    setBanInput(''); setBanSuggestions([]);
     fetchBanned();
   };
 
@@ -343,10 +391,20 @@ function AdminPanel({ onClose, channels }) {
 
         <div className="admin-section">
           <h3>🚫 Bannir un utilisateur</h3>
-          <div className="admin-row">
-            <input placeholder="Pseudo à bannir" value={banInput} onChange={e => setBanInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && banUser()} />
-            <button className="btn-danger" onClick={banUser}>Bannir</button>
+          <div className="admin-row" style={{ position: 'relative' }}>
+            <div className="search-wrapper" style={{ flex: 1 }}>
+              <input placeholder="Pseudo à bannir" value={banInput}
+                onChange={e => { setBanInput(e.target.value); searchUsers(e.target.value); }}
+                onKeyDown={e => e.key === 'Enter' && banUser()} />
+              {banSuggestions.length > 0 && (
+                <div className="suggestions-dropdown">
+                  {banSuggestions.map(u => (
+                    <div key={u} className="suggestion-item" onClick={() => banUser(u)}>👤 {u}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button className="btn-danger" onClick={() => banUser()}>Bannir</button>
           </div>
           <div className="admin-list">
             {banned.length === 0 && <span className="empty-convs">Aucun utilisateur banni</span>}
@@ -387,7 +445,7 @@ function PostCard({ post, userId, username, isAdmin, onLike, onComment, onMessag
           <button className="btn-dm" onClick={() => onMessageUser(post.author)}>✉️</button>
         )}
         {isAdmin && (
-          <button className="btn-dm" onClick={() => onDelete(post.id)} title="Supprimer">🗑️</button>
+          <button className="btn-dm" onClick={() => onDelete(post.id)}>🗑️</button>
         )}
       </div>
       <p className="post-content">{post.content}</p>
@@ -417,6 +475,52 @@ function PostCard({ post, userId, username, isAdmin, onLike, onComment, onMessag
   );
 }
 
+// ─── SEARCH BAR WITH SUGGESTIONS ──────────────────────────────────────────────
+function SearchBar({ onAdminCmd }) {
+  const [query, setQuery] = useState('');
+  const [suggestions, setSuggestions] = useState([]);
+  const [show, setShow] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const handleClick = (e) => { if (ref.current && !ref.current.contains(e.target)) setShow(false); };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  const search = async (q) => {
+    setQuery(q);
+    if (q === ADMIN_CMD) { onAdminCmd(); setQuery(''); return; }
+    if (!q.trim()) { setSuggestions([]); return; }
+    try {
+      const r = await fetch(`/api/users?q=${encodeURIComponent(q)}`);
+      setSuggestions(await r.json());
+      setShow(true);
+    } catch (e) {}
+  };
+
+  return (
+    <div className="search-wrapper header-search" ref={ref}>
+      <input
+        className="search-input"
+        placeholder="Rechercher un utilisateur..."
+        value={query}
+        onChange={e => search(e.target.value)}
+        onFocus={() => suggestions.length > 0 && setShow(true)}
+      />
+      {show && suggestions.length > 0 && (
+        <div className="suggestions-dropdown">
+          {suggestions.map(u => (
+            <div key={u} className="suggestion-item" onClick={() => { setQuery(u); setShow(false); }}>
+              👤 {u}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export default function Home() {
   const [posts, setPosts] = useState([]);
@@ -431,13 +535,12 @@ export default function Home() {
 
   const [channels, setChannels] = useState([]);
   const [activeChannel, setActiveChannel] = useState(null);
+  const [showSidebar, setShowSidebar] = useState(false);
 
   const [showMessages, setShowMessages] = useState(false);
   const [totalUnread, setTotalUnread] = useState(0);
   const [dmTarget, setDmTarget] = useState(null);
-
   const [showAdmin, setShowAdmin] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
 
   const intervalRef = useRef(null);
 
@@ -474,6 +577,16 @@ export default function Home() {
       const r = await fetch(`/api/checkban?username=${encodeURIComponent(name)}`);
       const d = await r.json();
       setBanned(d.banned);
+    } catch (e) { setBanned(false); }
+  };
+
+  // Enregistrer le user dans la liste
+  const registerUser = async (name) => {
+    try {
+      await fetch('/api/users', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: name })
+      });
     } catch (e) {}
   };
 
@@ -481,6 +594,7 @@ export default function Home() {
     if (!setup && username) {
       fetchChannels();
       checkBan(username);
+      registerUser(username);
     }
   }, [setup, username]);
 
@@ -498,15 +612,6 @@ export default function Home() {
     const user = { name: username.trim(), avatar, id: userId };
     localStorage.setItem('sn_user', JSON.stringify(user));
     setSetup(false);
-  };
-
-  const handleSearch = (e) => {
-    e.preventDefault();
-    if (searchQuery === ADMIN_CMD) {
-      setIsAdmin(true);
-      setShowAdmin(true);
-      setSearchQuery('');
-    }
   };
 
   const handlePost = async () => {
@@ -570,7 +675,6 @@ export default function Home() {
         <div className="setup-card">
           <h1>🚫</h1>
           <p style={{ color: 'var(--danger)', fontSize: '1.1rem' }}>Ton compte a été banni.</p>
-          <p style={{ color: 'var(--muted)', fontSize: '0.85rem' }}>Contacte un administrateur si tu penses que c'est une erreur.</p>
         </div>
       </div>
       <style jsx global>{styles}</style>
@@ -585,46 +689,45 @@ export default function Home() {
       <div className="app">
         <header>
           <div className="header-inner">
+            <button className="btn-hamburger" onClick={() => setShowSidebar(!showSidebar)}>☰</button>
             <h1>🌐 Agora</h1>
-            <form className="search-form" onSubmit={handleSearch}>
-              <input className="search-input" placeholder="Rechercher un utilisateur..."
-                value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
-            </form>
+            <SearchBar onAdminCmd={() => { setIsAdmin(true); setShowAdmin(true); }} />
             <div className="header-right">
               <button className="btn-messages" onClick={() => { setDmTarget(null); setShowMessages(true); }}>
                 ✉️ {totalUnread > 0 && <span className="notif-dot">{totalUnread}</span>}
               </button>
               {isAdmin && <button className="btn-admin" onClick={() => setShowAdmin(true)}>⚙️</button>}
-              <span className="user-badge">{avatar} {username}</span>
+              <span className="user-badge">{avatar} <span className="username-text">{username}</span></span>
             </div>
           </div>
         </header>
 
         <div className="layout">
-          {/* SIDEBAR SALONS */}
-          <aside className="sidebar">
+          {/* SIDEBAR */}
+          <aside className={`sidebar ${showSidebar ? 'sidebar-open' : ''}`}>
             <div className="sidebar-title">Salons</div>
             {channels.length === 0 && <p className="empty-channels">Aucun salon.<br/>L'admin doit en créer.</p>}
             {channels.map(c => (
               <button key={c.id} className={`channel-btn ${activeChannel === c.id ? 'active' : ''}`}
-                onClick={() => setActiveChannel(c.id)}>
+                onClick={() => { setActiveChannel(c.id); setShowSidebar(false); }}>
                 # {c.name}
                 {c.description && <span className="channel-desc">{c.description}</span>}
               </button>
             ))}
           </aside>
 
+          {showSidebar && <div className="sidebar-overlay" onClick={() => setShowSidebar(false)} />}
+
           {/* FEED */}
           <main>
             {!activeChannel || channels.length === 0 ? (
-              <div className="empty">Aucun salon disponible pour l'instant.</div>
+              <div className="empty">Aucun salon disponible.<br/>L'admin doit en créer via ⚙️</div>
             ) : (
               <>
                 <div className="channel-header-bar">
                   <span># {currentChannel?.name}</span>
                   {currentChannel?.description && <span className="channel-header-desc">{currentChannel.description}</span>}
                 </div>
-
                 <div className="compose-box">
                   <span className="compose-avatar">{avatar}</span>
                   <div className="compose-right">
@@ -640,7 +743,6 @@ export default function Home() {
                     </div>
                   </div>
                 </div>
-
                 <div className="feed">
                   {posts.length === 0 && <div className="empty">Aucun message dans ce salon.</div>}
                   {posts.map(post => (
@@ -673,14 +775,15 @@ export default function Home() {
 const styles = `
   @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;700&display=swap');
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  :root { --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e; --accent: #00e5a0; --text: #e8e8f0; --muted: #6b6b80; --danger: #ff4d6d; }
+  :root { --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e; --accent: #00e5a0; --text: #e8e8f0; --muted: #6b6b80; --danger: #ff4d6d; --header-h: 56px; }
   body { background: var(--bg); color: var(--text); font-family: 'IBM Plex Sans', sans-serif; min-height: 100vh; }
 
-  .setup-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at 50% 0%, #0d2018 0%, var(--bg) 70%); }
-  .setup-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 48px 40px; width: 100%; max-width: 400px; text-align: center; display: flex; flex-direction: column; gap: 20px; }
+  /* SETUP */
+  .setup-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at 50% 0%, #0d2018 0%, var(--bg) 70%); padding: 20px; }
+  .setup-card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 40px 32px; width: 100%; max-width: 400px; text-align: center; display: flex; flex-direction: column; gap: 18px; }
   .setup-card h1 { font-family: 'IBM Plex Mono', monospace; font-size: 2rem; color: var(--accent); }
   .setup-card p { color: var(--muted); font-size: 0.9rem; }
-  .avatar-preview { font-size: 3rem; height: 64px; display: flex; align-items: center; justify-content: center; }
+  .avatar-preview { font-size: 3rem; height: 60px; display: flex; align-items: center; justify-content: center; }
   .avatar-picker { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
   .avatar-picker button { background: var(--border); border: 2px solid transparent; border-radius: 8px; padding: 6px 10px; cursor: pointer; font-size: 1.2rem; transition: all 0.15s; }
   .avatar-picker button:hover { border-color: var(--accent); }
@@ -688,139 +791,169 @@ const styles = `
 
   input, textarea { width: 100%; background: var(--border); border: 1px solid #2a2a3e; border-radius: 8px; padding: 10px 14px; color: var(--text); font-family: 'IBM Plex Sans', sans-serif; font-size: 0.95rem; transition: border-color 0.2s; resize: none; }
   input:focus, textarea:focus { outline: none; border-color: var(--accent); }
-  .btn-primary { background: var(--accent); color: #0a0a0f; border: none; border-radius: 8px; padding: 10px 24px; font-family: 'IBM Plex Mono', monospace; font-size: 0.88rem; font-weight: 600; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
+  .btn-primary { background: var(--accent); color: #0a0a0f; border: none; border-radius: 8px; padding: 10px 22px; font-family: 'IBM Plex Mono', monospace; font-size: 0.85rem; font-weight: 600; cursor: pointer; transition: all 0.15s; white-space: nowrap; }
   .btn-primary:hover { background: #00ffa8; }
   .btn-primary:disabled { opacity: 0.5; cursor: default; }
   .btn-danger { background: var(--danger); color: white; border: none; border-radius: 8px; padding: 6px 14px; font-size: 0.82rem; cursor: pointer; white-space: nowrap; }
   .btn-danger:hover { opacity: 0.85; }
 
-  header { position: sticky; top: 0; z-index: 100; background: rgba(10,10,15,0.95); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); }
-  .header-inner { max-width: 1100px; margin: 0 auto; padding: 12px 20px; display: flex; align-items: center; gap: 16px; }
-  header h1 { font-family: 'IBM Plex Mono', monospace; font-size: 1.2rem; color: var(--accent); white-space: nowrap; }
-  .search-form { flex: 1; }
-  .search-input { padding: 8px 14px; font-size: 0.88rem; }
-  .header-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
-  .user-badge { background: var(--border); border-radius: 20px; padding: 6px 12px; font-size: 0.82rem; color: var(--muted); white-space: nowrap; }
-  .btn-messages { position: relative; background: var(--border); border: 1px solid #2a2a3e; border-radius: 20px; padding: 6px 12px; font-size: 1rem; cursor: pointer; transition: all 0.15s; }
+  /* HEADER */
+  header { position: sticky; top: 0; z-index: 100; background: rgba(10,10,15,0.95); backdrop-filter: blur(12px); border-bottom: 1px solid var(--border); height: var(--header-h); }
+  .header-inner { max-width: 1100px; margin: 0 auto; padding: 0 16px; height: 100%; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-family: 'IBM Plex Mono', monospace; font-size: 1.1rem; color: var(--accent); white-space: nowrap; }
+  .btn-hamburger { background: none; border: none; color: var(--muted); font-size: 1.3rem; cursor: pointer; padding: 4px; display: none; flex-shrink: 0; }
+  .header-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; margin-left: auto; }
+  .user-badge { background: var(--border); border-radius: 20px; padding: 5px 12px; font-size: 0.82rem; color: var(--muted); white-space: nowrap; }
+  .btn-messages { position: relative; background: var(--border); border: 1px solid #2a2a3e; border-radius: 20px; padding: 5px 12px; font-size: 1rem; cursor: pointer; transition: all 0.15s; flex-shrink: 0; }
   .btn-messages:hover { border-color: var(--accent); }
-  .btn-admin { background: var(--border); border: 1px solid #2a2a3e; border-radius: 20px; padding: 6px 12px; font-size: 1rem; cursor: pointer; transition: all 0.15s; }
-  .btn-admin:hover { border-color: var(--accent); }
+  .btn-admin { background: var(--border); border: 1px solid #2a2a3e; border-radius: 20px; padding: 5px 12px; font-size: 1rem; cursor: pointer; }
   .notif-dot { position: absolute; top: -4px; right: -4px; background: var(--danger); color: white; border-radius: 10px; padding: 1px 5px; font-size: 0.68rem; font-weight: 600; animation: pulse 1.5s infinite; }
   @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.2); } }
 
-  .layout { max-width: 1100px; margin: 0 auto; display: flex; min-height: calc(100vh - 57px); }
+  /* SEARCH */
+  .search-wrapper { position: relative; flex: 1; }
+  .header-search { max-width: 320px; }
+  .search-input { padding: 8px 12px; font-size: 0.85rem; }
+  .suggestions-dropdown { position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; z-index: 50; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+  .suggestion-item { padding: 10px 14px; cursor: pointer; font-size: 0.88rem; transition: background 0.15s; }
+  .suggestion-item:hover { background: var(--border); color: var(--accent); }
 
-  .sidebar { width: 220px; flex-shrink: 0; border-right: 1px solid var(--border); padding: 16px 0; display: flex; flex-direction: column; gap: 2px; position: sticky; top: 57px; height: calc(100vh - 57px); overflow-y: auto; }
-  .sidebar-title { padding: 0 16px 10px; font-size: 0.72rem; font-family: 'IBM Plex Mono', monospace; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
-  .channel-btn { background: none; border: none; text-align: left; padding: 8px 16px; color: var(--muted); cursor: pointer; border-radius: 6px; margin: 0 6px; transition: all 0.15s; display: flex; flex-direction: column; gap: 2px; }
+  /* LAYOUT */
+  .layout { max-width: 1100px; margin: 0 auto; display: flex; min-height: calc(100vh - var(--header-h)); }
+
+  /* SIDEBAR */
+  .sidebar { width: 210px; flex-shrink: 0; border-right: 1px solid var(--border); padding: 14px 0; display: flex; flex-direction: column; gap: 2px; position: sticky; top: var(--header-h); height: calc(100vh - var(--header-h)); overflow-y: auto; }
+  .sidebar-title { padding: 0 14px 10px; font-size: 0.7rem; font-family: 'IBM Plex Mono', monospace; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+  .channel-btn { background: none; border: none; text-align: left; padding: 8px 14px; color: var(--muted); cursor: pointer; border-radius: 6px; margin: 0 6px; transition: all 0.15s; display: flex; flex-direction: column; gap: 2px; font-size: 0.88rem; }
   .channel-btn:hover { background: var(--surface); color: var(--text); }
   .channel-btn.active { background: #0d2018; color: var(--accent); }
-  .channel-desc { font-size: 0.72rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .empty-channels { padding: 16px; color: var(--muted); font-size: 0.82rem; text-align: center; line-height: 1.5; }
+  .channel-desc { font-size: 0.7rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .empty-channels { padding: 14px; color: var(--muted); font-size: 0.8rem; text-align: center; line-height: 1.5; }
+  .sidebar-overlay { display: none; }
 
-  main { flex: 1; padding: 20px; overflow-y: auto; }
-  .channel-header-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
-  .channel-header-bar span:first-child { font-family: 'IBM Plex Mono', monospace; font-size: 1rem; font-weight: 600; }
-  .channel-header-desc { font-size: 0.82rem; color: var(--muted); }
-
-  .compose-box { display: flex; gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-bottom: 20px; }
-  .compose-avatar { font-size: 1.5rem; flex-shrink: 0; padding-top: 4px; }
-  .compose-right { flex: 1; display: flex; flex-direction: column; gap: 10px; }
+  /* MAIN */
+  main { flex: 1; padding: 18px; overflow-y: auto; min-width: 0; }
+  .channel-header-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+  .channel-header-bar span:first-child { font-family: 'IBM Plex Mono', monospace; font-size: 0.95rem; font-weight: 600; }
+  .channel-header-desc { font-size: 0.8rem; color: var(--muted); }
+  .compose-box { display: flex; gap: 10px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin-bottom: 16px; }
+  .compose-avatar { font-size: 1.4rem; flex-shrink: 0; padding-top: 2px; }
+  .compose-right { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
   .compose-footer { display: flex; justify-content: space-between; align-items: center; }
-  .char-count { font-size: 0.78rem; color: var(--muted); font-family: 'IBM Plex Mono', monospace; }
+  .char-count { font-size: 0.76rem; color: var(--muted); font-family: 'IBM Plex Mono', monospace; }
   .feed { display: flex; flex-direction: column; gap: 10px; }
-  .empty { text-align: center; color: var(--muted); padding: 40px; }
+  .empty { text-align: center; color: var(--muted); padding: 40px; line-height: 2; }
 
-  .post-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; }
-  .post-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-  .post-avatar { font-size: 1.4rem; }
-  .post-author { font-weight: 600; font-size: 0.88rem; display: block; }
-  .post-time { color: var(--muted); font-size: 0.75rem; font-family: 'IBM Plex Mono', monospace; }
-  .post-content { font-size: 0.92rem; line-height: 1.6; margin-bottom: 12px; white-space: pre-wrap; word-break: break-word; }
-  .post-actions { display: flex; gap: 10px; }
-  .btn-action { background: none; border: 1px solid var(--border); border-radius: 20px; padding: 4px 12px; color: var(--muted); font-size: 0.82rem; cursor: pointer; transition: all 0.15s; font-family: 'IBM Plex Mono', monospace; }
+  /* POST */
+  .post-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .post-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .post-avatar { font-size: 1.3rem; }
+  .post-author { font-weight: 600; font-size: 0.86rem; display: block; }
+  .post-time { color: var(--muted); font-size: 0.73rem; font-family: 'IBM Plex Mono', monospace; }
+  .post-content { font-size: 0.9rem; line-height: 1.6; margin-bottom: 12px; white-space: pre-wrap; word-break: break-word; }
+  .post-actions { display: flex; gap: 8px; }
+  .btn-action { background: none; border: 1px solid var(--border); border-radius: 20px; padding: 4px 12px; color: var(--muted); font-size: 0.8rem; cursor: pointer; transition: all 0.15s; font-family: 'IBM Plex Mono', monospace; }
   .btn-action:hover { border-color: var(--accent); color: var(--accent); }
   .btn-action.liked { border-color: var(--danger); color: var(--danger); }
   .btn-dm { background: none; border: none; font-size: 1rem; cursor: pointer; opacity: 0.4; transition: opacity 0.15s; padding: 3px; }
   .btn-dm:hover { opacity: 1; }
   .comments-section { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
-  .comment { display: flex; gap: 8px; }
-  .comment-avatar { font-size: 1rem; flex-shrink: 0; }
-  .comment-author { font-weight: 600; font-size: 0.8rem; margin-right: 6px; color: var(--accent); }
-  .comment-text { font-size: 0.85rem; }
+  .comment { display: flex; gap: 6px; }
+  .comment-avatar { font-size: 0.95rem; flex-shrink: 0; }
+  .comment-author { font-weight: 600; font-size: 0.78rem; margin-right: 5px; color: var(--accent); }
+  .comment-text { font-size: 0.83rem; }
   .comment-input { display: flex; gap: 6px; margin-top: 4px; }
-  .comment-input input { flex: 1; padding: 7px 10px; font-size: 0.83rem; }
+  .comment-input input { flex: 1; padding: 7px 10px; font-size: 0.82rem; }
   .comment-input button { background: var(--accent); border: none; border-radius: 6px; color: var(--bg); padding: 0 12px; cursor: pointer; font-weight: bold; }
 
+  /* MESSAGES */
   .messages-overlay { position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,0.7); display: flex; justify-content: flex-end; animation: fadeIn 0.2s; }
   @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
   .messages-panel { display: flex; width: 100%; max-width: 680px; height: 100vh; background: var(--bg); border-left: 1px solid var(--border); animation: slideIn 0.2s; }
   @keyframes slideIn { from { transform: translateX(40px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
   .messages-sidebar { width: 220px; border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
   .messages-header { padding: 14px 16px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
-  .messages-header h2 { font-size: 0.95rem; font-family: 'IBM Plex Mono', monospace; color: var(--accent); }
+  .messages-header h2 { font-size: 0.92rem; font-family: 'IBM Plex Mono', monospace; color: var(--accent); }
   .btn-close { background: none; border: none; color: var(--muted); font-size: 1.1rem; cursor: pointer; }
-  .new-conv { padding: 10px; border-bottom: 1px solid var(--border); display: flex; gap: 6px; }
-  .new-conv input { flex: 1; padding: 7px 10px; font-size: 0.83rem; }
-  .new-conv button { background: var(--accent); border: none; border-radius: 6px; color: var(--bg); padding: 0 10px; cursor: pointer; font-weight: bold; }
+  .new-conv { padding: 10px; border-bottom: 1px solid var(--border); }
   .conv-list { flex: 1; overflow-y: auto; }
-  .empty-convs { padding: 16px; color: var(--muted); font-size: 0.8rem; text-align: center; line-height: 1.5; }
+  .empty-convs { padding: 14px; color: var(--muted); font-size: 0.78rem; text-align: center; line-height: 1.5; display: block; }
   .conv-item { padding: 12px 14px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); transition: background 0.15s; }
   .conv-item:hover { background: var(--surface); }
   .conv-item.active { background: #0d2018; border-left: 3px solid var(--accent); }
-  .conv-name { font-size: 0.88rem; font-weight: 500; }
-  .unread-badge { background: var(--danger); color: white; border-radius: 10px; padding: 2px 6px; font-size: 0.7rem; font-weight: 600; }
+  .conv-name { font-size: 0.86rem; font-weight: 500; }
+  .unread-badge { background: var(--danger); color: white; border-radius: 10px; padding: 2px 6px; font-size: 0.68rem; font-weight: 600; }
   .messages-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-  .no-conv { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 0.88rem; text-align: center; padding: 20px; }
-  .conv-header { padding: 12px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 10px; font-weight: 600; flex-shrink: 0; }
+  .no-conv { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 0.86rem; text-align: center; padding: 20px; }
+  .conv-header { padding: 12px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; font-weight: 600; flex-shrink: 0; font-size: 0.92rem; }
   .btn-back { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 1rem; }
-  .media-hint { margin-left: auto; font-size: 0.7rem; color: var(--muted); font-weight: 400; font-family: 'IBM Plex Mono', monospace; }
+  .btn-close-mobile { display: none; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 1rem; margin-left: auto; }
+  .media-hint { font-size: 0.68rem; color: var(--muted); font-weight: 400; font-family: 'IBM Plex Mono', monospace; }
   .messages-list { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 8px; }
-  .message-bubble { max-width: 75%; padding: 9px 13px; border-radius: 12px; }
+  .message-bubble { max-width: 78%; padding: 9px 12px; border-radius: 12px; }
   .message-bubble.mine { align-self: flex-end; background: #0d2018; border: 1px solid var(--accent); border-bottom-right-radius: 4px; }
   .message-bubble.theirs { align-self: flex-start; background: var(--surface); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
   .message-bubble p { font-size: 0.88rem; line-height: 1.5; word-break: break-word; }
-  .msg-time { font-size: 0.7rem; color: var(--muted); font-family: 'IBM Plex Mono', monospace; display: block; margin-top: 3px; }
-  .message-bubble.mine .msg-time { text-align: right; }
+  .msg-meta { display: flex; align-items: center; justify-content: flex-end; gap: 5px; margin-top: 3px; }
+  .msg-time { font-size: 0.68rem; color: var(--muted); font-family: 'IBM Plex Mono', monospace; }
+  .msg-status { font-size: 0.72rem; color: var(--muted); font-family: 'IBM Plex Mono', monospace; }
+  .message-bubble.mine .msg-status { color: var(--accent); }
   .media-content { margin-bottom: 5px; }
   .msg-image { max-width: 200px; max-height: 200px; border-radius: 8px; display: block; object-fit: cover; }
   .msg-audio { width: 180px; height: 34px; }
-  .media-expired { font-size: 0.78rem; color: var(--muted); font-style: italic; }
+  .media-expired { font-size: 0.76rem; color: var(--muted); font-style: italic; }
   .message-input { padding: 10px 12px; border-top: 1px solid var(--border); display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
-  .message-input input { flex: 1; padding: 9px 12px; }
-  .btn-send { background: var(--accent); border: none; border-radius: 8px; color: var(--bg); padding: 0 14px; height: 38px; cursor: pointer; font-weight: bold; font-size: 1rem; }
+  .message-input input { flex: 1; padding: 9px 12px; min-width: 0; }
+  .btn-send { background: var(--accent); border: none; border-radius: 8px; color: var(--bg); padding: 0 14px; height: 38px; cursor: pointer; font-weight: bold; font-size: 1rem; flex-shrink: 0; }
   .btn-media { background: var(--border); border: 1px solid #2a2a3e; border-radius: 8px; padding: 0 9px; height: 38px; cursor: pointer; font-size: 1rem; flex-shrink: 0; }
   .btn-media:hover { border-color: var(--accent); }
   .voice-recording { display: flex; align-items: center; gap: 5px; background: #1a0a0a; border: 1px solid var(--danger); border-radius: 8px; padding: 5px 8px; flex-shrink: 0; }
   .rec-dot { color: var(--danger); font-size: 0.65rem; animation: pulse 1s infinite; }
-  .rec-time { font-family: 'IBM Plex Mono', monospace; font-size: 0.82rem; color: var(--danger); min-width: 34px; }
-  .btn-rec-cancel { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 0.85rem; }
+  .rec-time { font-family: 'IBM Plex Mono', monospace; font-size: 0.8rem; color: var(--danger); min-width: 32px; }
+  .btn-rec-cancel { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 0.82rem; }
   .btn-rec-send { background: var(--accent); border: none; border-radius: 5px; color: var(--bg); padding: 2px 7px; cursor: pointer; font-weight: bold; }
 
-  .admin-overlay { position: fixed; inset: 0; z-index: 300; background: rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center; animation: fadeIn 0.2s; }
-  .admin-panel { background: var(--bg); border: 1px solid var(--border); border-radius: 16px; width: 100%; max-width: 560px; max-height: 85vh; overflow-y: auto; padding: 0; }
-  .admin-header { padding: 18px 24px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; background: var(--bg); }
-  .admin-header h2 { font-family: 'IBM Plex Mono', monospace; color: var(--accent); font-size: 1rem; }
-  .admin-msg { margin: 12px 24px; padding: 10px 14px; background: var(--surface); border-radius: 8px; font-size: 0.85rem; color: var(--accent); }
-  .admin-section { padding: 18px 24px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 12px; }
-  .admin-section h3 { font-size: 0.88rem; font-family: 'IBM Plex Mono', monospace; color: var(--muted); }
-  .admin-row { display: flex; gap: 8px; align-items: center; }
-  .admin-row input { flex: 1; padding: 8px 12px; font-size: 0.85rem; }
+  /* ADMIN */
+  .admin-overlay { position: fixed; inset: 0; z-index: 300; background: rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center; animation: fadeIn 0.2s; padding: 16px; }
+  .admin-panel { background: var(--bg); border: 1px solid var(--border); border-radius: 16px; width: 100%; max-width: 540px; max-height: 85vh; overflow-y: auto; }
+  .admin-header { padding: 16px 22px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; background: var(--bg); }
+  .admin-header h2 { font-family: 'IBM Plex Mono', monospace; color: var(--accent); font-size: 0.95rem; }
+  .admin-msg { margin: 10px 22px; padding: 9px 13px; background: var(--surface); border-radius: 8px; font-size: 0.83rem; color: var(--accent); }
+  .admin-section { padding: 16px 22px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 10px; }
+  .admin-section h3 { font-size: 0.85rem; font-family: 'IBM Plex Mono', monospace; color: var(--muted); }
+  .admin-row { display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; }
+  .admin-row input { flex: 1; min-width: 120px; padding: 8px 12px; font-size: 0.85rem; }
   .admin-list { display: flex; flex-direction: column; gap: 6px; }
-  .admin-list-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--surface); border-radius: 8px; padding: 8px 12px; font-size: 0.85rem; }
-  .admin-desc { color: var(--muted); font-size: 0.78rem; flex: 1; }
+  .admin-list-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--surface); border-radius: 8px; padding: 8px 12px; font-size: 0.83rem; }
+  .admin-desc { color: var(--muted); font-size: 0.76rem; flex: 1; }
 
+  /* MOBILE */
   @media (max-width: 768px) {
-    .sidebar { width: 60px; }
-    .channel-btn { padding: 10px; align-items: center; }
-    .channel-desc, .sidebar-title { display: none; }
-    .channel-btn span:first-child { font-size: 0.75rem; }
+    .btn-hamburger { display: flex; }
+    .header-search { max-width: 160px; }
+    .username-text { display: none; }
+
+    .sidebar { position: fixed; top: var(--header-h); left: 0; height: calc(100vh - var(--header-h)); z-index: 90; background: var(--bg); transform: translateX(-100%); transition: transform 0.25s; width: 240px; }
+    .sidebar.sidebar-open { transform: translateX(0); }
+    .sidebar-overlay { display: block; position: fixed; inset: 0; top: var(--header-h); z-index: 89; background: rgba(0,0,0,0.5); }
+
+    .layout { flex-direction: column; }
     main { padding: 12px; }
-    .search-form { display: none; }
-  }
-  @media (max-width: 480px) {
+
     .messages-panel { max-width: 100%; }
-    .messages-sidebar { width: 160px; }
-    .setup-card { padding: 30px 20px; }
+    .messages-sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--border); }
+    .messages-sidebar.hidden-mobile { display: none; }
+    .messages-main.hidden-mobile { display: none; }
+    .messages-main { width: 100%; }
+    .btn-close-mobile { display: block; }
+    .media-hint { display: none; }
+  }
+
+  @media (max-width: 480px) {
+    .setup-card { padding: 28px 18px; }
+    .header-search { display: none; }
+    .message-bubble { max-width: 88%; }
+    .msg-image { max-width: 160px; max-height: 160px; }
+    .msg-audio { width: 150px; }
   }
 `;

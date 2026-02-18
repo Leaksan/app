@@ -29,6 +29,7 @@ export default async function handler(req, res) {
       content: content || '',
       mediaId: mediaId || null,
       timestamp: Date.now(),
+      read: false,
     };
 
     await kv.lpush(convKey(from, to), msg);
@@ -38,6 +39,31 @@ export default async function handler(req, res) {
     await kv.incr('unread:' + to + ':' + from);
 
     return res.status(201).json(msg);
+  }
+
+  // PATCH - marquer les messages comme lus
+  if (req.method === 'PATCH') {
+    const { reader, sender } = req.body;
+    if (!reader || !sender) return res.status(400).json({ error: 'Manque reader/sender' });
+
+    const key = convKey(reader, sender);
+    const messages = await kv.lrange(key, 0, 199) || [];
+    let updated = false;
+
+    const newMessages = messages.map(m => {
+      if (m.from === sender && !m.read) {
+        updated = true;
+        return { ...m, read: true };
+      }
+      return m;
+    });
+
+    if (updated) {
+      await kv.del(key);
+      if (newMessages.length > 0) await kv.rpush(key, ...newMessages.reverse());
+    }
+
+    return res.status(200).json({ ok: true });
   }
 
   res.status(405).end();
