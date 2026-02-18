@@ -293,6 +293,7 @@ function AdminPanel({ onClose, channels }) {
   const [newChannelDesc, setNewChannelDesc] = useState('');
   const [channelList, setChannelList] = useState(channels);
   const [msg, setMsg] = useState('');
+  const [userList, setUserList] = useState([]);
 
   const fetchBanned = async () => {
     const r = await fetch('/api/admin');
@@ -305,7 +306,14 @@ function AdminPanel({ onClose, channels }) {
     setChannelList(await r.json());
   };
 
-  useEffect(() => { fetchBanned(); fetchChannels(); }, []);
+  const fetchUsers = async () => {
+    try {
+      const r = await fetch('/api/users');
+      setUserList(await r.json());
+    } catch(e) {}
+  };
+
+  useEffect(() => { fetchBanned(); fetchChannels(); fetchUsers(); }, []);
 
   const searchUsers = async (q) => {
     if (!q.trim()) { setBanSuggestions([]); return; }
@@ -384,6 +392,22 @@ function AdminPanel({ onClose, channels }) {
                 <span># {c.name}</span>
                 {c.description && <span className="admin-desc">{c.description}</span>}
                 <button className="btn-danger" onClick={() => deleteChannel(c.id)}>Supprimer</button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="admin-section">
+          <h3>👥 Utilisateurs ({userList.length})</h3>
+          <div className="admin-list" style={{maxHeight: '220px', overflowY: 'auto'}}>
+            {userList.length === 0 && <span className="empty-convs">Aucun utilisateur enregistré</span>}
+            {userList.map(u => (
+              <div key={u} className="admin-list-item">
+                <span>👤 {u}</span>
+                {banned.includes(u)
+                  ? <span style={{color: 'var(--danger)', fontSize: '0.78rem'}}>🚫 Banni</span>
+                  : <button className="btn-danger" onClick={() => banUser(u)}>Bannir</button>
+                }
               </div>
             ))}
           </div>
