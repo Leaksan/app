@@ -6,27 +6,12 @@ const kv = new Redis({
 });
 
 export default async function handler(req, res) {
-  // GET - liste des bannis
-  if (req.method === 'GET') {
-    const banned = await kv.smembers('banned') || [];
-    return res.status(200).json({ banned });
+  const { username } = req.query;
+  if (!username) return res.status(200).json({ banned: false });
+  try {
+    const banned = await kv.sismember('banned', username);
+    return res.status(200).json({ banned: !!banned });
+  } catch (e) {
+    return res.status(200).json({ banned: false });
   }
-
-  // POST - bannir un user
-  if (req.method === 'POST') {
-    const { username } = req.body;
-    if (!username) return res.status(400).json({ error: 'Username requis' });
-    await kv.sadd('banned', username);
-    return res.status(200).json({ ok: true });
-  }
-
-  // DELETE - débannir un user
-  if (req.method === 'DELETE') {
-    const { username } = req.body;
-    if (!username) return res.status(400).json({ error: 'Username requis' });
-    await kv.srem('banned', username);
-    return res.status(200).json({ ok: true });
-  }
-
-  res.status(405).end();
 }
