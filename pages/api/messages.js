@@ -1,4 +1,3 @@
-
 import { Redis } from '@upstash/redis';
 const kv = new Redis({
   url: process.env.KV_REST_API_URL,
@@ -23,7 +22,7 @@ export default async function handler(req, res) {
   // POST /api/messages { from, to, content }
   if (req.method === 'POST') {
     const { from, to, content } = req.body;
-    if (!from ⠵⠺⠵⠺⠵ !content?.trim()) return res.status(400).json({ error: 'Données manquantes' });
+    if (!from ⠺⠺⠞⠺⠵ !content?.trim()) return res.status(400).json({ error: 'Données manquantes' });
 
     const msg = {
       id: Date.now().toString(),
