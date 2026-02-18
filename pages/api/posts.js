@@ -1,7 +1,7 @@
 import { Redis } from '@upstash/redis';
 const kv = new Redis({
-  url: process.env.STORAGE_URL,
-  token: process.env.STORAGE_TOKEN,
+  url: process.env.KV_URL,
+  token: process.env.KV_REST_API_TOKEN,
 });
 import { v4 as uuidv4 } from 'uuid';
 
